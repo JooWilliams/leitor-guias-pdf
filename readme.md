@@ -1,4 +1,5 @@
 # leGuias - Extrator de Guias TISS (PDF → Excel)
+ 
 
 Ferramenta para extrair dados de guias médicas no padrão TISS (SP/SADT) em PDF e exportar para planilha Excel organizada.
 
