@@ -4,55 +4,66 @@ import os
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill
 
+
+VERBOSE = False
+
+REGEX_CAMPOS = {
+    'Nome': re.compile(
+        r'10\s*-\s*Nome\s*\n\s*([A-ZÀ-Úa-zà-ú ]+)',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    'Número da Guia Principal': re.compile(
+        r'3\s*-\s*Número da Guia Principal\s*\n?\s*\d+\s+(\d{5,})',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    'Número da Guia Principal Fallback': re.compile(
+        r'2\s*-\s*N[°º]?\s*(?:da\s+)?Guia\s+no\s+Prestador\n.*?(\d{5,})',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    'Data Autorização': re.compile(
+        r'4\s*-\s*Data da Autorização.*?\n\s*(\d{2}/\d{2}/\d{4})',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    'Senha': re.compile(
+        r'4\s*-\s*Data da Autorização.*?\n\s*\d{2}/\d{2}/\d{4}\s+([A-Z0-9]+)',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    'Número da Carteira': re.compile(
+        r'8\s*-\s*Número da Carteira.*?\n\s*(\d{5,})',
+        re.IGNORECASE | re.DOTALL,
+    ),
+}
+
+REGEX_PROCEDIMENTO = re.compile(
+    r'(\d)\s+(\d{8})\s+(.+?)\s+(\d+)\s+(\d+)',
+    re.IGNORECASE | re.DOTALL,
+)
+REGEX_CODIGO_TUSS = re.compile(r'\d{8}')
+
+DESC_FORMATADA = {
+    "TTO TEA E OUTROS TRANST GLOB DO DES-P DIA C/ FONO": "FONOAUDIOLOGIA",
+    "PROCEDIMENTO PADRONIZADO PSICOPEDAGOGIA - POR DIA": "PSICOPEDAGOGIA",
+    "TTO TEA E OUTROS TRANST GLOB DO DES-P DIA C/ PSICO": "PSICOTERAPIA",
+    "TTO TEA E OUTROS TRANS GLOB DO DES-P DIA C/ TO": "TERAPIA OCUPACIONAL",
+    "PP SEL ALIMEN TTO TEA E OUTROS TGD P/ DIA C/ NUTRI": "NUTRIÇÃO",
+    "PP MUSICOTERAPIA - TEA E OUT TRANST GLOB DO DESENV": "MUSICOTERAPIA",
+    "TTO TEA E OUTROS TRANS GLOB DO DES-P DIA C/ PSICOM": "PSICOMOTRICIDADE",
+}
+
+
 def extrair_dados_guia(page):
     """Extrai dados estruturados de uma página da guia TISS usando pdfplumber."""
     texto = page.extract_text() or ''
     dados = {}
 
-    # --- Dados Gerais ---
-    dados['Registro ANS'] = extrair_campo(texto, r'1 - Registro ANS.*?(\d{5,6})')
-    # Tenta primeiro o campo 3, se não encontrar, busca no campo 2
-    dados['Número da Guia Principal'] = extrair_campo(texto, r'3\s*-\s*Número da Guia Principal\s*\n?\s*\d+\s+(\d{5,})')
+    dados['Nome'] = extrair_campo(texto, REGEX_CAMPOS['Nome'])
+    dados['Número da Guia Principal'] = extrair_campo(texto, REGEX_CAMPOS['Número da Guia Principal'])
     if not dados['Número da Guia Principal']:
-        # Formato alternativo: "2-N° da Guia no Prestador" seguido do número na próxima linha
-        match = re.search(r'2\s*-\s*N[°º]?\s*(?:da\s+)?Guia\s+no\s+Prestador\n.*?(\d{5,})', texto)
-        if match:
-            dados['Número da Guia Principal'] = match.group(1)
-        else:
-            dados['Número da Guia Principal'] = ''
-    dados['Número da Guia'] = extrair_campo(texto, r'7 - Número da Guia.*?\n(\d+)')
-    dados['Número da Carteira'] = extrair_campo(texto, r'8 - Número da Carteira\s*\n?\s*(\d+)')
-    dados['Senha'] = extrair_campo(texto, r'5 - Senha.*?(\d+)')
-    dados['Data Autorização'] = extrair_campo(texto, r'4 - Data da Autorização\s*\n?\s*(\d{2}/\d{2}/\d{4})')
-    dados['Data Validade Senha'] = extrair_campo(texto, r'6 - Data de Validade da Senha\s*\n?\s*(\d{2}/\d{2}/\d{4})')
-    dados['Validade Carteira'] = extrair_campo(texto, r'9 - Validade da Carteira\s*\n?\s*(\d{2}/\d{2}/\d{4})')
+        dados['Número da Guia Principal'] = extrair_campo(texto, REGEX_CAMPOS['Número da Guia Principal Fallback'])
 
-    # --- Dados do Beneficiário ---
-    # Tenta capturar o nome que aparece antes de "4 - Data" ou após "10 - Nome"
-    dados['Nome Beneficiário'] = extrair_campo(
-        texto, r'(?:10 - Nome.*?\n|Beneficiário.*?\n)\s*([A-ZÀ-Ú ]{5,})'
-    )
-    # Fallback: pegar nome em CAPS que parece nome de pessoa
-    if not dados['Nome Beneficiário']:
-        dados['Nome Beneficiário'] = extrair_campo(
-            texto, r'([A-ZÀ-Ú]{3,}(?:\s+(?:DO|DA|DOS|DAS|DE)?\s+[A-ZÀ-Ú]{3,}\s+[A-ZÀ-Ú]{3,}))'
-        )
-    dados['Recém Nascido'] = extrair_campo(texto, r'12 - Recém Nascido\s*\n?\s*(Sim|Não)')
-
-    # --- Dados do Solicitante ---
-    dados['Contratado Solicitante'] = extrair_campo(texto, r'14 - Nome do Contratado\s*\n?\s*(.+?)(?=\s*19|\s*\n)')
-    dados['Nome Profissional'] = extrair_campo(texto, r'15 - Nome do Profissional Solicitante.*?\n\s*(.+?)(?=\s*DF|\s*\n)')
-    dados['Conselho'] = extrair_campo(texto, r'16 - Conselho Profissional\s*\n?\s*(CRM|CRO|CRP|CREFITO)')
-    dados['Número Conselho'] = extrair_campo(texto, r'17 - Número do Conselho\s*\n?\s*(\d+)')
-    dados['UF Conselho'] = extrair_campo(texto, r'18 - UF\s*(\w{2})')
-    dados['Código CBO'] = extrair_campo(texto, r'19 - Código\s*CBO\s*\n?\s*(\w+)')
-
-    # --- Dados da Solicitação ---
-    dados['Caráter Atendimento'] = extrair_campo(texto, r'21 - Caráter.*?(ELETIVO|URGENCIA|URGÊNCIA)')
-    dados['Data Solicitação'] = extrair_campo(texto, r'22 - Data da Solicitação.*?(\d{2}/\d{2}/\d{4})')
-    dados['Indicação Clínica'] = extrair_campo(texto, r'23 - Indicação Clínica\s*\n?\s*(.+?)(?=\s*\d{2}/\d{2}/\d{4}|\n)')
-
-    # --- Procedimentos via extract_tables (mais confiável) ---
+    dados['Data Autorização'] = extrair_campo(texto, REGEX_CAMPOS['Data Autorização'])
+    dados['Senha'] = extrair_campo(texto, REGEX_CAMPOS['Senha'])
+    dados['Número da Carteira'] = extrair_campo(texto, REGEX_CAMPOS['Número da Carteira'])
     dados['Procedimentos'] = extrair_procedimentos_tabela(page, texto)
 
     return dados
@@ -60,12 +71,26 @@ def extrair_dados_guia(page):
 
 def extrair_procedimentos_tabela(page, texto_fallback):
     """
-    Tenta extrair procedimentos via tabela do pdfplumber.
-    Se não conseguir, faz fallback com regex no texto.
+    Tenta extrair procedimentos pelo texto já lido.
+    Se não conseguir, faz fallback com tabela do pdfplumber.
     """
     procedimentos = []
 
-    # Tentar extrair tabelas da página
+    for match in REGEX_PROCEDIMENTO.finditer(texto_fallback):
+        procedimentos.append({
+            'Tabela': match.group(1),
+            'Código do Procedimento': match.group(2),
+            'Descrição': formatar_descricao(match.group(3)),
+            'Qtde. Solic.': int(match.group(4)),
+            'Qtde. Aut.': int(match.group(5)),
+        })
+
+    if procedimentos:
+        return procedimentos
+
+    if not REGEX_CODIGO_TUSS.search(texto_fallback):
+        return procedimentos
+
     tabelas = page.extract_tables()
     for tabela in tabelas:
         for linha in tabela:
@@ -76,34 +101,22 @@ def extrair_procedimentos_tabela(page, texto_fallback):
             texto_linha = ' '.join(celulas)
 
             # Procurar linhas com código de 8 dígitos (padrão TUSS)
-            match = re.search(r'(\d{1})\s*(\d{8})\s+(.+?)\s+(\d+)\s+(\d+)', texto_linha)
+            match = REGEX_PROCEDIMENTO.search(texto_linha)
             if match:
                 procedimentos.append({
                     'Tabela': match.group(1),
-                    # 'Código': match.group(2),
-                    'Descrição': match.group(3).strip(),
-                    'Qtde Solicitada': int(match.group(4)),
-                    'Qtde Autorizada': int(match.group(5)),
+                    'Código do Procedimento': match.group(2),
+                    'Descrição': formatar_descricao(match.group(3)),
+                    'Qtde. Solic.': int(match.group(4)),
+                    'Qtde. Aut.': int(match.group(5)),
                 })
-
-    # Fallback: regex no texto bruto
-    if not procedimentos:
-        matches = re.findall(r'(\d)\s+(\d{8})\s+(.+?)\s+(\d+)\s+(\d+)', texto_fallback)
-        for m in matches:
-            procedimentos.append({
-                'Tabela': m[0],
-                # 'Código': m[1],
-                'Descrição': m[2].strip(),
-                'Qtde Solicitada': int(m[3]),
-                'Qtde Autorizada': int(m[4]),
-            })
 
     return procedimentos
 
 
 def extrair_campo(texto, pattern):
     """Helper para extrair um campo via regex."""
-    match = re.search(pattern, texto, re.IGNORECASE | re.DOTALL)
+    match = pattern.search(texto)
     if match and match.lastindex:
         return match.group(1).strip()
     elif match:
@@ -120,41 +133,18 @@ def exportar_para_excel(lista_dados, nome_arquivo='guias_extraidas.xlsx'):
     header_fill = PatternFill(start_color='2F5496', end_color='2F5496', fill_type='solid')
     header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
-    # =============================================
-    # ABA 1 - DADOS GERAIS
-    # =============================================
-    ws = wb.active
-    ws.title = 'Dados Gerais'
-
-    campos = [
-        'Registro ANS', 'Número da Guia Principal', 'Número da Guia', 'Número da Carteira', 'Senha',
-        'Nome Beneficiário', 'Contratado Solicitante', 'Nome Profissional',
-        'Conselho', 'Número Conselho', 'UF Conselho',
-        'Caráter Atendimento', 'Data Solicitação', 'Indicação Clínica',
-    ]
-
-    # Cabeçalho
-    ws.append(campos)
-    for cell in ws[1]:
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_align
-
-    # Dados
-    for dados in lista_dados:
-        ws.append([dados.get(c, '') for c in campos])
-
-    # Ajustar largura
-    for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
-        ws.column_dimensions[col[0].column_letter].width = min(max_len + 3, 40)
-
-    # =============================================
-    # ABA 2 - PROCEDIMENTOS
-    # =============================================
-    ws2 = wb.create_sheet('Procedimentos')
+    ws2 = wb.active
+    ws2.title = 'Procedimentos'
     cols_proc = [
-        'Beneficiário', 'Nº Guia Principal', 'Descrição', 'Qtde Autorizada'
+        'Nome',
+        'Número da Guia Principal',
+        'Data da Autorização',
+        'Senha',
+        'Número da Carteira',
+        'Código do Procedimento',
+        'Descrição',
+        'Qtde. Solic.',
+        'Qtde. Aut.',
     ]
     ws2.append(cols_proc)
     for cell in ws2[1]:
@@ -165,10 +155,15 @@ def exportar_para_excel(lista_dados, nome_arquivo='guias_extraidas.xlsx'):
     for dados in lista_dados:
         for proc in dados.get('Procedimentos', []):
             ws2.append([
-                dados.get('Nome Beneficiário', ''),
+                dados.get('Nome'),
                 dados.get('Número da Guia Principal', ''),
-                proc['Descrição'],
-                proc['Qtde Autorizada'],
+                dados.get('Data Autorização', ''),
+                dados.get('Senha', ''),
+                dados.get('Número da Carteira', ''),
+                proc.get('Código do Procedimento', ''),
+                proc.get('Descrição', ''),
+                proc.get('Qtde. Solic.', ''),
+                proc.get('Qtde. Aut.', ''),
             ])
 
     for col in ws2.columns:
@@ -176,45 +171,64 @@ def exportar_para_excel(lista_dados, nome_arquivo='guias_extraidas.xlsx'):
         ws2.column_dimensions[col[0].column_letter].width = min(max_len + 3, 50)
 
     wb.save(nome_arquivo)
-    print(f'\n✅ Arquivo salvo: {nome_arquivo}')
+    print(f'\nArquivo salvo: {nome_arquivo}')
+
+def formatar_descricao(descricao_original: str) -> str:
+    descricao_limpa = re.sub(r"\s+", " ", descricao_original).strip()
+    return DESC_FORMATADA.get(descricao_limpa.upper(), descricao_limpa)
+
+def processar_pdfs(pasta='assets'):
+    arquivos = [f for f in os.listdir(pasta) if f.lower().endswith('.pdf')]
+    todas_guias = []
+    campos_contexto = [
+        'Nome',
+        'Número da Guia Principal',
+        'Data Autorização',
+        'Senha',
+        'Número da Carteira',
+    ]
+
+    for nome_arquivo in arquivos:
+        caminho = os.path.join(pasta, nome_arquivo)
+        total_procedimentos = 0
+        dados_ultima_pagina = {}
+        print(f'\nProcessando: {nome_arquivo}')
+
+        with pdfplumber.open(caminho) as pdf:
+            for i, page in enumerate(pdf.pages):
+                dados = extrair_dados_guia(page)
+                for campo in campos_contexto:
+                    if not dados.get(campo):
+                        dados[campo] = dados_ultima_pagina.get(campo, '')
+
+                if any(dados.get(campo) for campo in campos_contexto):
+                    dados_ultima_pagina = {
+                        campo: dados.get(campo, '')
+                        for campo in campos_contexto
+                    }
+
+                dados['Arquivo Origem'] = nome_arquivo
+                dados['Página'] = i + 1
+                todas_guias.append(dados)
+                total_procedimentos += len(dados.get('Procedimentos', []))
+
+                if VERBOSE:
+                    print(f'  Página {i+1}:')
+                    for k, v in dados.items():
+                        if k not in ('Procedimentos', 'Arquivo Origem', 'Página') and v:
+                            print(f'    {k}: {v}')
+                    for proc in dados.get('Procedimentos', []):
+                        print(f'    -> {proc["Código do Procedimento"]} | {proc["Descrição"]} '
+                              f'| Solic: {proc["Qtde. Solic."]} | Aut: {proc["Qtde. Aut."]}')
+
+        print(f'  {len(pdf.pages)} pagina(s), {total_procedimentos} procedimento(s)')
+
+    return todas_guias
 
 
-# =============================================================
-# EXECUÇÃO - PROCESSAR UM OU VÁRIOS PDFs
-# =============================================================
-
-# Opção 1: Um único PDF
-# arquivos = ['ALICE PITOMBEIRA PONTES_2.pdf']
-
-# Opção 2: Todos os PDFs de uma pasta
-pasta = 'guias'  # pasta atual para o caminho desejado
-arquivos = [f for f in os.listdir(pasta) if f.lower().endswith('.pdf')]
-
-todas_guias = []
-
-for nome_arquivo in arquivos:
-    caminho = os.path.join(pasta, nome_arquivo)
-    print(f'\n📄 Processando: {nome_arquivo}')
-
-    with pdfplumber.open(caminho) as pdf:
-        for i, page in enumerate(pdf.pages):
-            dados = extrair_dados_guia(page)
-            dados['Arquivo Origem'] = nome_arquivo
-            dados['Página'] = i + 1
-            todas_guias.append(dados)
-
-            # Preview no terminal
-            print(f'  Página {i+1}:')
-            for k, v in dados.items():
-                if k not in ('Procedimentos', 'Arquivo Origem', 'Página'):
-                    if v:
-                        print(f'    {k}: {v}')
-            for proc in dados.get('Procedimentos', []):
-                print(f'    → {proc["Descrição"]} '
-                      f'| Aut: {proc["Qtde Autorizada"]}')
-
-# Exportar
-if todas_guias:
-    exportar_para_excel(todas_guias)
-else:
-    print('⚠️ Nenhuma guia encontrada nos PDFs.')
+if __name__ == '__main__':
+    guias = processar_pdfs()
+    if guias:
+        exportar_para_excel(guias)
+    else:
+        print('Nenhuma guia encontrada nos PDFs.')
