@@ -137,14 +137,14 @@ def exportar_para_excel(lista_dados, nome_arquivo='guias_extraidas.xlsx'):
     ws2.title = 'Procedimentos'
     cols_proc = [
         'Nome',
-        'Número da Guia Principal',
-        'Data da Autorização',
+        'N_Guia_Principal',
+        'Dt_Autorizacao',
         'Senha',
-        'Número da Carteira',
-        'Código do Procedimento',
-        'Descrição',
-        'Qtde. Solic.',
-        'Qtde. Aut.',
+        'N_Carteira',
+        'Cod_Procedimento',
+        'Descricao',
+        'Qtde_Solic.',
+        'Qtde_Aut.',
     ]
     ws2.append(cols_proc)
     for cell in ws2[1]:
